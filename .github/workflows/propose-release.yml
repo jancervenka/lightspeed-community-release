@@ -1,0 +1,165 @@
+name: Propose community operator release
+
+on:
+  workflow_dispatch:
+    inputs:
+      new_version:
+        description: "New community operator version (for example, 0.0.3)"
+        required: true
+        type: string
+      container_image_tag:
+        description: "Tag used for both the operator-bundle and operator images"
+        required: true
+        default: latest
+        type: string
+      openshift_lightspeed_operator_version:
+        description: "OPENSHIFT_LIGHTSPEED_OPERATOR_VERSION value (for example, 1.0.9)"
+        required: true
+        type: string
+      fork_repository:
+        description: "Existing fork to push to, in owner/repository form"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-release-${{ inputs.fork_repository }}-${{ inputs.new_version }}
+  cancel-in-progress: false
+
+jobs:
+  propose-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      UPSTREAM_REPOSITORY: redhat-openshift-ecosystem/community-operators-prod
+      BASE_BRANCH: main
+      REPO_PATH: /tmp/community-operators-prod
+      NEW_VERSION: ${{ inputs.new_version }}
+      CONTAINER_IMAGE_TAG: ${{ inputs.container_image_tag }}
+      OPENSHIFT_LIGHTSPEED_OPERATOR_VERSION: ${{ inputs.openshift_lightspeed_operator_version }}
+      FORK_REPOSITORY: ${{ inputs.fork_repository }}
+      RELEASE_BRANCH: openstack-lightspeed-release-${{ inputs.new_version }}
+      GIT_AUTHOR_NAME: ${{ vars.RELEASE_AUTHOR_NAME }}
+      GIT_AUTHOR_EMAIL: ${{ vars.RELEASE_AUTHOR_EMAIL }}
+
+    steps:
+      - name: Check out release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Validate release configuration
+        env:
+          GH_TOKEN: ${{ secrets.COMMUNITY_OPERATORS_TOKEN }}
+        run: |
+          : "${GH_TOKEN:?Set the COMMUNITY_OPERATORS_TOKEN repository secret.}"
+          : "${GIT_AUTHOR_NAME:?Set the RELEASE_AUTHOR_NAME repository variable.}"
+          : "${GIT_AUTHOR_EMAIL:?Set the RELEASE_AUTHOR_EMAIL repository variable.}"
+          if [[ ! "$NEW_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::new_version must have the form X.Y.Z."
+            exit 1
+          fi
+          if [[ ! "$FORK_REPOSITORY" =~ ^[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+$ ]]; then
+            echo "::error::fork_repository must have the form owner/repository."
+            exit 1
+          fi
+          if [[ ! "$CONTAINER_IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "::error::container_image_tag must be a valid container image tag."
+            exit 1
+          fi
+          : "${OPENSHIFT_LIGHTSPEED_OPERATOR_VERSION:?An OpenShift Lightspeed operator version is required.}"
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: |
+          uv sync --locked
+          if ! command -v podman >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --yes podman
+          fi
+
+      - name: Prepare upstream checkout and resume an existing release branch
+        env:
+          GH_TOKEN: ${{ secrets.COMMUNITY_OPERATORS_TOKEN }}
+        run: |
+          fork_info=$(gh api "repos/$FORK_REPOSITORY")
+          if ! jq --exit-status --arg upstream "$UPSTREAM_REPOSITORY" \
+            '.fork and (.parent.full_name == $upstream or .source.full_name == $upstream) and .permissions.push' \
+            <<< "$fork_info" >/dev/null; then
+            echo "::error::The token must have push access to a fork of $UPSTREAM_REPOSITORY."
+            exit 1
+          fi
+
+          gh auth setup-git
+          # Full history allows pushing to a fork that is behind upstream.
+          git clone --filter=blob:none --sparse --single-branch --branch "$BASE_BRANCH" \
+            "https://github.com/$UPSTREAM_REPOSITORY.git" "$REPO_PATH"
+          git -C "$REPO_PATH" sparse-checkout set operators/openstack-lightspeed-operator
+          if [[ -e "$REPO_PATH/operators/openstack-lightspeed-operator/$NEW_VERSION" ]]; then
+            echo "::error::Version $NEW_VERSION already exists on upstream $BASE_BRANCH."
+            exit 1
+          fi
+
+          git -C "$REPO_PATH" remote add fork "https://github.com/$FORK_REPOSITORY.git"
+          release_ref=$(git -C "$REPO_PATH" ls-remote --heads fork "refs/heads/$RELEASE_BRANCH")
+          if [[ -n "$release_ref" ]]; then
+            git -C "$REPO_PATH" fetch fork "refs/heads/$RELEASE_BRANCH"
+            git -C "$REPO_PATH" checkout -b "$RELEASE_BRANCH" FETCH_HEAD
+          fi
+
+      - name: Extract and prepare the release bundle
+        run: |
+          bash init.sh "$NEW_VERSION" "$CONTAINER_IMAGE_TAG"
+          uv run --locked main.py \
+            --repo-path "$REPO_PATH" \
+            --new-version "$NEW_VERSION" \
+            --openshift-lightspeed-operator-version "$OPENSHIFT_LIGHTSPEED_OPERATOR_VERSION" \
+            --image-tag "$CONTAINER_IMAGE_TAG"
+
+      - name: Commit, push, and propose the upstream pull request
+        env:
+          GH_TOKEN: ${{ secrets.COMMUNITY_OPERATORS_TOKEN }}
+        run: |
+          git -C "$REPO_PATH" config user.name "$GIT_AUTHOR_NAME"
+          git -C "$REPO_PATH" config user.email "$GIT_AUTHOR_EMAIL"
+          git -C "$REPO_PATH" add -- "operators/openstack-lightspeed-operator/$NEW_VERSION"
+          git -C "$REPO_PATH" diff --cached --check
+          if ! git -C "$REPO_PATH" diff --cached --quiet; then
+            git -C "$REPO_PATH" commit --signoff \
+              -m "operator openstack-lightspeed-operator ($NEW_VERSION)"
+          fi
+          git -C "$REPO_PATH" push fork "HEAD:refs/heads/$RELEASE_BRANCH"
+
+          pr_head="${FORK_REPOSITORY%%/*}:$RELEASE_BRANCH"
+          pr_url=$(gh api --method GET "repos/$UPSTREAM_REPOSITORY/pulls" \
+            -f state=open -f head="$pr_head" -f base="$BASE_BRANCH" \
+            --jq '.[0].html_url // empty')
+          if [[ -z "$pr_url" ]]; then
+            body_file="$RUNNER_TEMP/release-pr-body.md"
+            cat > "$body_file" <<EOF
+          Release OpenStack Lightspeed community operator $NEW_VERSION.
+
+          - Bundle image: quay.io/openstack-lightspeed/operator-bundle:$CONTAINER_IMAGE_TAG
+          - Operator image tag resolved to a digest: $CONTAINER_IMAGE_TAG
+          - OpenShift Lightspeed operator version: $OPENSHIFT_LIGHTSPEED_OPERATOR_VERSION
+
+          Generated by init.sh and main.py in [$GITHUB_REPOSITORY]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID).
+          EOF
+            pr_url=$(gh api --method POST "repos/$UPSTREAM_REPOSITORY/pulls" \
+              -f title="operator openstack-lightspeed-operator ($NEW_VERSION)" \
+              -f head="$pr_head" -f head_repo="${FORK_REPOSITORY#*/}" \
+              -f base="$BASE_BRANCH" -F "body=@$body_file" \
+              --jq '.html_url')
+          fi
+
+          echo "$pr_url"
+          printf 'Release pull request: %s\n' "$pr_url" >> "$GITHUB_STEP_SUMMARY"
