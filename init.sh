@@ -51,7 +51,8 @@ trap cleanup EXIT
 podman pull "$IMAGE"
 # Use the pulled image ID so a moving tag cannot change between pull and create.
 IMAGE_ID=$(podman image inspect --format '{{.Id}}' "$IMAGE")
-CONTAINER_ID=$(podman create "$IMAGE_ID")
+# Bundle images may have no command; this placeholder is never executed.
+CONTAINER_ID=$(podman create "$IMAGE_ID" /bin/true)
 for directory in manifests metadata tests; do
     podman cp "${CONTAINER_ID}:/${directory}" "$BUNDLE_PATH"
 done
