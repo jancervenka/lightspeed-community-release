@@ -7,6 +7,9 @@ uses [`peter-evans/create-pull-request`](https://github.com/peter-evans/create-p
 to commit the changes, push a release branch to your fork, and open a PR against
 [`redhat-openshift-ecosystem/community-operators-prod:main`](https://github.com/redhat-openshift-ecosystem/community-operators-prod).
 
+For a future migration to source-based releases in the operator repository, see
+the [step-by-step shared-workflow implementation guide](docs/reuse-release-operator.md).
+
 ## One-time setup
 
 1. Add `.github/workflows/propose-release.yml` to your repository's default
