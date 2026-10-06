@@ -42,7 +42,6 @@ Open **Actions → Propose community operator release → Run workflow** and fil
 | --- | --- | --- |
 | `new_version` | `0.0.3` | New community version, in `X.Y.Z` form. |
 | `container_image_tag` | `latest` | Existing tag in both `quay.io/openstack-lightspeed/operator-bundle` and `quay.io/openstack-lightspeed/operator`. Prefer an immutable release tag for reproducible runs. |
-| `openshift_lightspeed_operator_version` | `1.0.9` | Value written to `OPENSHIFT_LIGHTSPEED_OPERATOR_VERSION` in the CSV. |
 | `fork_repository` | `your-account/community-operators-prod` | Existing fork that receives the release branch. |
 
 The workflow uses Bash, Podman, curl, jq, and yq provided by the Ubuntu runner.
