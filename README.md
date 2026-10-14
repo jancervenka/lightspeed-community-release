@@ -21,6 +21,7 @@ the [step-by-step shared-workflow implementation guide](docs/reuse-release-opera
    | Kind | Name | Value |
    | --- | --- | --- |
    | Secret | `COMMUNITY_OPERATORS_TOKEN` | A classic personal access token with `public_repo` scope from an account that can push to the fork and open upstream PRs. |
+   | Variable | `COMMUNITY_OPERATORS_FORK` | Existing fork that receives the release branch, for example `your-account/community-operators-prod`. |
    | Variable | `RELEASE_AUTHOR_NAME` | Contributor's real name for the Git author and commit sign-off. |
    | Variable | `RELEASE_AUTHOR_EMAIL` | Corresponding Git author and sign-off email. |
 
@@ -48,7 +49,8 @@ Open **Actions → Propose community operator release → Run workflow** and fil
 | --- | --- | --- |
 | `new_version` | `0.0.3` | New community version, in `X.Y.Z` form. |
 | `container_image_tag` | `latest` | Existing tag in both `quay.io/openstack-lightspeed/operator-bundle` and `quay.io/openstack-lightspeed/operator`. Prefer an immutable release tag for reproducible runs. |
-| `fork_repository` | `your-account/community-operators-prod` | Existing fork that receives the release branch. |
+
+The destination fork comes from the `COMMUNITY_OPERATORS_FORK` repository variable.
 
 The workflow uses Bash, Git, gh, Podman, curl, jq, and yq provided by the Ubuntu runner.
 Images must be publicly pullable and the bundle must contain `/manifests`,

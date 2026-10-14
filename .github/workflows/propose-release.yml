@@ -12,16 +12,12 @@ on:
         required: true
         default: latest
         type: string
-      fork_repository:
-        description: "Existing fork to push to, in owner/repository form"
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: community-release-${{ inputs.fork_repository }}-${{ inputs.new_version }}
+  group: community-release-${{ vars.COMMUNITY_OPERATORS_FORK }}-${{ inputs.new_version }}
   cancel-in-progress: false
 
 jobs:
@@ -34,7 +30,7 @@ jobs:
     env:
       NEW_VERSION: ${{ inputs.new_version }}
       CONTAINER_IMAGE_TAG: ${{ inputs.container_image_tag }}
-      FORK_REPOSITORY: ${{ inputs.fork_repository }}
+      FORK_REPOSITORY: ${{ vars.COMMUNITY_OPERATORS_FORK }}
       AUTHOR_NAME: ${{ vars.RELEASE_AUTHOR_NAME }}
       AUTHOR_EMAIL: ${{ vars.RELEASE_AUTHOR_EMAIL }}
 
@@ -70,7 +66,7 @@ jobs:
             exit 1
           fi
           if [[ ! "$FORK_REPOSITORY" =~ ^[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+$ ]]; then
-            echo "::error::fork_repository must have the form owner/repository."
+            echo "::error::Set the COMMUNITY_OPERATORS_FORK repository variable to owner/repository."
             exit 1
           fi
           if [[ ! "$CONTAINER_IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
